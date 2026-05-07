@@ -1479,7 +1479,9 @@ void GatherQMM::eval_gpu(const std::vector<array>& inputs, array& out) {
   // We are walking x in order and w is also in order so we can batch up the
   // matmuls and reuse reading x and w.
   //
-  // TODO: Tune 16 and 4 here a bit better.
+  // For small B (MoE decode with few active experts), use bidirectional
+  // gather_qmm which parallelizes experts via grid z-dimension instead of
+  // sequential segments. Falls through to gather_qmm at line ~1505.
   if (M == 1 && B >= 16 && right_sorted_ == true && B / E >= 4) {
     gather_qmm_rhs(
         x,
@@ -1500,8 +1502,9 @@ void GatherQMM::eval_gpu(const std::vector<array>& inputs, array& out) {
     return;
   }
 
-  // It is a matrix matrix product
-  if (M >= vector_limit) {
+  // It is a matrix matrix product, or a small-batch MoE decode where
+  // bidirectional gather_qmm (parallel z-dim) beats sequential qmv
+  if (M >= vector_limit || (M == 1 && B <= 16 && B > 1)) {
     gather_qmm(
         x,
         w,
